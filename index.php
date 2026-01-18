@@ -30,6 +30,32 @@ $channels = [
     'Private Channel' => -1003251791991
 ];
 
+// File existence check and creation - IMPORTANT FOR RENDER.COM
+function ensureFilesExist() {
+    $files = [
+        'users.json' => '{"users": {}, "owner_id": ' . OWNER_ID . ', "bot_username": "@MNA_2_Bot", "last_updated": ""}',
+        'movies.csv' => "movie-name,message_id,channel_username\nThe Family Man S01 2019,69,@EntertainmentTadka786\nThe Family Man S02 2022,67,@EntertainmentTadka786\nThe Family Man S03 2025,73,@EntertainmentTadka786",
+        'bot_log.txt' => "# Telegram Bot Log File\n# Created: " . date('Y-m-d') . "\n# Bot: @MNA_2_Bot\n# Owner: " . OWNER_ID . "\n\n[" . date('Y-m-d H:i:s') . "] Log file initialized\n",
+        'error.log' => "# Error Log\n"
+    ];
+    
+    foreach ($files as $filename => $default_content) {
+        if (!file_exists($filename)) {
+            file_put_contents($filename, $default_content);
+            chmod($filename, 0666);
+            logMessage("Created missing file: $filename");
+        }
+        
+        // Ensure writable permissions
+        if (file_exists($filename)) {
+            @chmod($filename, 0666);
+        }
+    }
+}
+
+// Call this function at the start
+ensureFilesExist();
+
 // Function API call ke liye
 function apiRequest($method, $parameters = []) {
     $url = API_URL . $method;
@@ -98,7 +124,7 @@ function readUsers() {
 function saveUsers($data) {
     $data['last_updated'] = date('Y-m-d H:i:s');
     file_put_contents(USERS_FILE, json_encode($data, JSON_PRETTY_PRINT));
-    chmod(USERS_FILE, 0666); // Write permissions ensure karo
+    @chmod(USERS_FILE, 0666); // Write permissions ensure karo
 }
 
 // Logging ke liye function
@@ -111,7 +137,7 @@ function logMessage($message) {
     
     // File me bhi save karo
     file_put_contents(LOG_FILE, $log_message, FILE_APPEND);
-    chmod(LOG_FILE, 0666); // Write permissions ensure karo
+    @chmod(LOG_FILE, 0666); // Write permissions ensure karo
 }
 
 // Main function webhook handle karne ke liye
@@ -124,6 +150,8 @@ function processMessage($update) {
         $user_id = $message['from']['id'];
         $text = isset($message['text']) ? $message['text'] : '';
         
+        logMessage("Message received from user $user_id: $text");
+        
         // Users database me save karo
         $users = readUsers();
         if (!isset($users['users'][$user_id])) {
@@ -134,6 +162,7 @@ function processMessage($update) {
                 'last_seen' => date('Y-m-d H:i:s')
             ];
             saveUsers($users);
+            logMessage("New user registered: $user_id");
         }
         
         // Sirf owner hi commands use kar sakta hai
@@ -142,6 +171,7 @@ function processMessage($update) {
                 'chat_id' => $chat_id,
                 'text' => "❌ Tu owner nahi hai! Sirf owner hi commands use kar sakta hai.\n\n👤 Owner ID: " . OWNER_ID
             ]);
+            logMessage("Unauthorized access attempt by user $user_id");
             return;
         }
         
@@ -149,12 +179,14 @@ function processMessage($update) {
         if (strpos($text, '/start') === 0) {
             $response = "🚀 *MNA Forward Bot Started!*\n\n";
             $response .= "*Host:* Render.com\n";
-            $response .= "*Status:* Running ✅\n\n";
+            $response .= "*Status:* Running ✅\n";
+            $response .= "*Port:* 8080\n\n";
             $response .= "*Commands:*\n";
             $response .= "/forward_all - CSV se sab movies forward karo\n";
             $response .= "/status - Bot status dekho\n";
             $response .= "/help - Help message\n";
-            $response .= "/webhook - Webhook set/reset karo\n\n";
+            $response .= "/webhook - Webhook set/reset karo\n";
+            $response .= "/logs - Last 10 logs dekho\n\n";
             $response .= "*Channels Configured:* " . count($channels) . "\n";
             $response .= "*Group ID:* " . GROUP_ID;
             
@@ -163,18 +195,24 @@ function processMessage($update) {
                 'text' => $response,
                 'parse_mode' => 'Markdown'
             ]);
+            logMessage("Start command executed by owner");
         }
         elseif (strpos($text, '/forward_all') === 0) {
+            logMessage("Forward all command received");
             forwardAllMovies($chat_id);
         }
         elseif (strpos($text, '/status') === 0) {
             $movies = readCSV(CSV_FILE);
             $users = readUsers();
+            $log_size = file_exists(LOG_FILE) ? round(filesize(LOG_FILE) / 1024, 2) : 0;
+            
             $response = "📊 *Bot Status*\n\n";
             $response .= "🌐 *Hosting:* Render.com\n";
+            $response .= "🟢 *Status:* Active\n";
             $response .= "📁 Movies in CSV: " . count($movies) . "\n";
             $response .= "👥 Registered Users: " . count($users['users']) . "\n";
             $response .= "📺 Channels: " . count($channels) . "\n";
+            $response .= "📊 Log Size: " . $log_size . " KB\n";
             $response .= "👤 Owner ID: " . OWNER_ID . "\n";
             $response .= "👥 Group ID: " . GROUP_ID . "\n";
             $response .= "🤖 Bot: @MNA_2_Bot\n";
@@ -185,6 +223,7 @@ function processMessage($update) {
                 'text' => $response,
                 'parse_mode' => 'Markdown'
             ]);
+            logMessage("Status command executed");
         }
         elseif (strpos($text, '/webhook') === 0) {
             $webhook_result = setWebhook();
@@ -193,6 +232,16 @@ function processMessage($update) {
                 'text' => $webhook_result,
                 'parse_mode' => 'Markdown'
             ]);
+            logMessage("Webhook command executed");
+        }
+        elseif (strpos($text, '/logs') === 0) {
+            $logs = getRecentLogs(10);
+            apiRequest('sendMessage', [
+                'chat_id' => $chat_id,
+                'text' => "📝 *Recent Logs (Last 10):*\n\n" . $logs,
+                'parse_mode' => 'Markdown'
+            ]);
+            logMessage("Logs command executed");
         }
         elseif (strpos($text, '/help') === 0) {
             $help_text = "🆘 *Help Guide*\n\n";
@@ -202,9 +251,13 @@ function processMessage($update) {
             $help_text .= "2. *Auto Forward:*\n";
             $help_text .= "   /forward_all - Sab movies forward ho jayengi\n\n";
             $help_text .= "3. *Delay Time:* " . DELAY_BETWEEN_FORWARDS . " seconds\n\n";
-            $help_text .= "4. *Webhook:*\n";
-            $help_text .= "   /webhook - Webhook reset karo\n\n";
-            $help_text .= "🌐 *Hosted on:* Render.com\n";
+            $help_text .= "4. *Commands:*\n";
+            $help_text .= "   /start - Bot start karo\n";
+            $help_text .= "   /status - Bot status dekho\n";
+            $help_text .= "   /webhook - Webhook reset karo\n";
+            $help_text .= "   /logs - Recent logs dekho\n";
+            $help_text .= "   /help - Help dekho\n\n";
+            $help_text .= "🌐 *Hosted on:* Render.com (Port 8080)\n";
             $help_text .= "📞 Developer: @EntertainmentTadkaBot";
             
             apiRequest('sendMessage', [
@@ -212,8 +265,92 @@ function processMessage($update) {
                 'text' => $help_text,
                 'parse_mode' => 'Markdown'
             ]);
+            logMessage("Help command executed");
+        }
+        elseif (strpos($text, '/addmovie') === 0) {
+            // Add movie command: /addmovie Movie Name,message_id,channel_username
+            $parts = explode(',', substr($text, 10));
+            if (count($parts) >= 3) {
+                $movie_name = trim($parts[0]);
+                $message_id = intval(trim($parts[1]));
+                $channel = trim($parts[2]);
+                
+                addMovieToCSV($movie_name, $message_id, $channel);
+                
+                apiRequest('sendMessage', [
+                    'chat_id' => $chat_id,
+                    'text' => "✅ Movie added successfully!\n\n*Name:* $movie_name\n*Message ID:* $message_id\n*Channel:* $channel",
+                    'parse_mode' => 'Markdown'
+                ]);
+                logMessage("Movie added: $movie_name");
+            } else {
+                apiRequest('sendMessage', [
+                    'chat_id' => $chat_id,
+                    'text' => "❌ Format galat hai!\n\nUse: /addmovie Movie Name,message_id,channel_username\nExample: /addmovie The Family Man S01,69,@EntertainmentTadka786",
+                    'parse_mode' => 'Markdown'
+                ]);
+            }
+        }
+        elseif (strpos($text, '/listmovies') === 0) {
+            $movies = readCSV(CSV_FILE);
+            if (count($movies) > 0) {
+                $response = "🎬 *Movies List:*\n\n";
+                foreach ($movies as $index => $movie) {
+                    $response .= ($index + 1) . ". *{$movie['name']}*\n";
+                    $response .= "   📝 Message ID: {$movie['message_id']}\n";
+                    $response .= "   📺 Channel: {$movie['channel_username']}\n\n";
+                }
+                $response .= "Total: " . count($movies) . " movies";
+            } else {
+                $response = "❌ No movies found in CSV file!";
+            }
+            
+            apiRequest('sendMessage', [
+                'chat_id' => $chat_id,
+                'text' => $response,
+                'parse_mode' => 'Markdown'
+            ]);
+            logMessage("Listmovies command executed");
+        }
+        else {
+            // Unknown command
+            apiRequest('sendMessage', [
+                'chat_id' => $chat_id,
+                'text' => "❌ Unknown command!\n\nUse /help for available commands.",
+                'parse_mode' => 'Markdown'
+            ]);
         }
     }
+}
+
+// Function to get recent logs
+function getRecentLogs($count = 10) {
+    if (!file_exists(LOG_FILE)) {
+        return "No logs found!";
+    }
+    
+    $logs = file(LOG_FILE, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES);
+    $recent_logs = array_slice($logs, -$count);
+    
+    return implode("\n", $recent_logs);
+}
+
+// Function to add movie to CSV
+function addMovieToCSV($name, $message_id, $channel) {
+    $file = fopen(CSV_FILE, 'a');
+    if ($file) {
+        // Check if file is empty
+        $size = filesize(CSV_FILE);
+        if ($size == 0) {
+            fputcsv($file, ['movie-name', 'message_id', 'channel_username']);
+        }
+        
+        fputcsv($file, [$name, $message_id, $channel]);
+        fclose($file);
+        @chmod(CSV_FILE, 0666);
+        return true;
+    }
+    return false;
 }
 
 // Sab movies forward karne ka function
@@ -226,8 +363,11 @@ function forwardAllMovies($chat_id) {
             'chat_id' => $chat_id,
             'text' => "❌ CSV file khali hai ya nahi mili!"
         ]);
+        logMessage("CSV file empty during forward_all");
         return;
     }
+    
+    logMessage("Starting to forward $total_movies movies");
     
     // Start message
     $start_msg = apiRequest('sendMessage', [
@@ -241,6 +381,7 @@ function forwardAllMovies($chat_id) {
             'chat_id' => $chat_id,
             'text' => "❌ Starting message send nahi kar paya. Bot check karo."
         ]);
+        logMessage("Failed to send start message: " . json_encode($start_msg));
         return;
     }
     
@@ -270,7 +411,8 @@ function forwardAllMovies($chat_id) {
         } else {
             $failed_count++;
             $failed_movies[] = $movie['name'];
-            logMessage("FAILED: Could not forward '{$movie['name']}'. Error: " . json_encode($result));
+            $error_desc = $result['description'] ?? 'Unknown error';
+            logMessage("FAILED: Could not forward '{$movie['name']}'. Error: $error_desc");
         }
         
         // Delay between forwards
@@ -302,6 +444,8 @@ function forwardAllMovies($chat_id) {
         'text' => $report,
         'parse_mode' => 'Markdown'
     ]);
+    
+    logMessage("Forwarding completed. Success: $success_count, Failed: $failed_count");
 }
 
 // Single message forward karne ka function
@@ -310,10 +454,19 @@ function forwardMessageToGroup($source_channel, $message_id) {
     $channel_map = [
         '@EntertainmentTadka786' => -1003181705395,
         '@ETBackup' => -1002964109368,
-        '@threater_print_movies' => -1002831605258
+        '@threater_print_movies' => -1002831605258,
+        '@Backup_Channel_2' => -1002337293281,
+        '@Private_Channel' => -1003251791991
     ];
     
+    // Agar @ sign nahi hai to add karo
+    if (strpos($source_channel, '@') !== 0) {
+        $source_channel = '@' . $source_channel;
+    }
+    
     $source_chat_id = $channel_map[$source_channel] ?? $source_channel;
+    
+    logMessage("Forwarding from: $source_channel (ID: $source_chat_id), Message ID: $message_id");
     
     // Forward message
     return apiRequest('forwardMessage', [
@@ -329,12 +482,18 @@ function setWebhook() {
     // Current URL get karo
     $protocol = isset($_SERVER['HTTPS']) && $_SERVER['HTTPS'] === 'on' ? 'https' : 'http';
     $host = $_SERVER['HTTP_HOST'] ?? 'localhost';
-    $webhook_url = $protocol . '://' . $host . '/';
+    
+    // Check if port is specified
+    $port = isset($_SERVER['SERVER_PORT']) ? $_SERVER['SERVER_PORT'] : '';
+    $host_with_port = $port && $port != 80 && $port != 443 ? "$host:$port" : $host;
+    
+    $webhook_url = $protocol . '://' . $host_with_port . '/';
     
     logMessage("Setting webhook to: $webhook_url");
     
     // Pehle existing webhook delete karo
-    apiRequest('deleteWebhook');
+    apiRequest('deleteWebhook', ['drop_pending_updates' => true]);
+    sleep(1); // Thoda wait karo
     
     // Naya webhook set karo
     $result = apiRequest('setWebhook', [
@@ -364,7 +523,12 @@ function setWebhook() {
 }
 
 // Main execution
+logMessage("========================================");
 logMessage("Script started at: " . date('Y-m-d H:i:s'));
+logMessage("Bot Token: " . substr(BOT_TOKEN, 0, 10) . "...");
+logMessage("Owner ID: " . OWNER_ID);
+logMessage("Group ID: " . GROUP_ID);
+logMessage("========================================");
 
 // Input get karo
 $input = file_get_contents("php://input");
@@ -390,83 +554,362 @@ if (!empty($input)) {
         <meta name='viewport' content='width=device-width, initial-scale=1.0'>
         <title>🤖 MNA Forward Bot</title>
         <style>
-            body { font-family: Arial, sans-serif; max-width: 800px; margin: 0 auto; padding: 20px; background: #f5f5f5; }
-            .container { background: white; padding: 30px; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
-            h1 { color: #2c3e50; }
-            .status { background: #e8f4fc; padding: 15px; border-radius: 5px; margin: 20px 0; }
-            .btn { display: inline-block; padding: 10px 20px; background: #3498db; color: white; text-decoration: none; border-radius: 5px; margin: 10px 5px; }
-            .btn:hover { background: #2980b9; }
-            .success { color: #27ae60; }
-            .error { color: #e74c3c; }
-            table { width: 100%; border-collapse: collapse; margin: 20px 0; }
-            th, td { padding: 10px; border: 1px solid #ddd; text-align: left; }
-            th { background: #f2f2f2; }
+            * {
+                margin: 0;
+                padding: 0;
+                box-sizing: border-box;
+                font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            }
+            
+            body {
+                background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                min-height: 100vh;
+                display: flex;
+                justify-content: center;
+                align-items: center;
+                padding: 20px;
+            }
+            
+            .container {
+                background: white;
+                padding: 40px;
+                border-radius: 20px;
+                box-shadow: 0 20px 40px rgba(0,0,0,0.1);
+                max-width: 900px;
+                width: 100%;
+            }
+            
+            .header {
+                text-align: center;
+                margin-bottom: 30px;
+            }
+            
+            h1 {
+                color: #333;
+                font-size: 2.5rem;
+                margin-bottom: 10px;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                gap: 15px;
+            }
+            
+            h1 .emoji {
+                font-size: 3rem;
+            }
+            
+            .tagline {
+                color: #666;
+                font-size: 1.1rem;
+                margin-bottom: 20px;
+            }
+            
+            .status-card {
+                background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+                color: white;
+                padding: 25px;
+                border-radius: 15px;
+                margin-bottom: 30px;
+            }
+            
+            .status-card h3 {
+                margin-bottom: 15px;
+                display: flex;
+                align-items: center;
+                gap: 10px;
+            }
+            
+            .info-grid {
+                display: grid;
+                grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+                gap: 20px;
+                margin-bottom: 30px;
+            }
+            
+            .info-item {
+                background: #f8f9fa;
+                padding: 20px;
+                border-radius: 10px;
+                border-left: 5px solid #667eea;
+            }
+            
+            .info-item h4 {
+                color: #333;
+                margin-bottom: 10px;
+                display: flex;
+                align-items: center;
+                gap: 10px;
+            }
+            
+            .btn-group {
+                display: flex;
+                flex-wrap: wrap;
+                gap: 15px;
+                justify-content: center;
+                margin: 30px 0;
+            }
+            
+            .btn {
+                padding: 15px 30px;
+                border: none;
+                border-radius: 50px;
+                font-size: 1rem;
+                font-weight: 600;
+                cursor: pointer;
+                transition: all 0.3s ease;
+                text-decoration: none;
+                display: inline-flex;
+                align-items: center;
+                justify-content: center;
+                gap: 10px;
+            }
+            
+            .btn-primary {
+                background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                color: white;
+            }
+            
+            .btn-success {
+                background: linear-gradient(135deg, #4CAF50 0%, #2E7D32 100%);
+                color: white;
+            }
+            
+            .btn-warning {
+                background: linear-gradient(135deg, #FF9800 0%, #F57C00 100%);
+                color: white;
+            }
+            
+            .btn-danger {
+                background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+                color: white;
+            }
+            
+            .btn:hover {
+                transform: translateY(-3px);
+                box-shadow: 0 10px 20px rgba(0,0,0,0.2);
+            }
+            
+            table {
+                width: 100%;
+                border-collapse: collapse;
+                margin: 20px 0;
+                border-radius: 10px;
+                overflow: hidden;
+                box-shadow: 0 5px 15px rgba(0,0,0,0.1);
+            }
+            
+            th {
+                background: #667eea;
+                color: white;
+                padding: 15px;
+                text-align: left;
+            }
+            
+            td {
+                padding: 15px;
+                border-bottom: 1px solid #eee;
+            }
+            
+            tr:hover {
+                background: #f8f9fa;
+            }
+            
+            .success {
+                color: #4CAF50;
+                font-weight: 600;
+            }
+            
+            .error {
+                color: #f44336;
+                font-weight: 600;
+            }
+            
+            .instructions {
+                background: #e8f4fc;
+                padding: 25px;
+                border-radius: 15px;
+                margin-top: 30px;
+            }
+            
+            .instructions h3 {
+                margin-bottom: 15px;
+                color: #2c3e50;
+            }
+            
+            .instructions ol {
+                margin-left: 20px;
+            }
+            
+            .instructions li {
+                margin-bottom: 10px;
+                color: #555;
+            }
+            
+            .footer {
+                text-align: center;
+                margin-top: 30px;
+                color: #666;
+                font-size: 0.9rem;
+            }
+            
+            @media (max-width: 768px) {
+                .container {
+                    padding: 20px;
+                }
+                
+                h1 {
+                    font-size: 2rem;
+                }
+                
+                .btn-group {
+                    flex-direction: column;
+                }
+                
+                .btn {
+                    width: 100%;
+                }
+            }
         </style>
     </head>
     <body>
         <div class='container'>
-            <h1>🤖 MNA Forward Bot</h1>
-            
-            <div class='status'>
-                <h3>🌐 Bot Status</h3>
-                <p><strong>Status:</strong> <span class='success'>Running ✅</span></p>
-                <p><strong>Host:</strong> Render.com</p>
-                <p><strong>Owner:</strong> " . OWNER_ID . "</p>
-                <p><strong>Bot:</strong> @MNA_2_Bot</p>
-                <p><strong>Developer:</strong> @EntertainmentTadkaBot</p>
-                <p><strong>Time:</strong> " . date('Y-m-d H:i:s') . "</p>
+            <div class='header'>
+                <h1>
+                    <span class='emoji'>🤖</span>
+                    MNA Forward Bot
+                </h1>
+                <p class='tagline'>Multi-Channel Telegram Forwarding Bot</p>
             </div>
             
-            <h3>⚙️ Quick Actions</h3>
-            <a href='?setwebhook=true' class='btn'>Set Webhook</a>
-            <a href='?checkstatus=true' class='btn'>Check Status</a>
-            <a href='movies.csv' class='btn' target='_blank'>View CSV</a>
+            <div class='status-card'>
+                <h3><span>🌐</span> Bot Status</h3>
+                <div class='info-grid'>
+                    <div class='info-item'>
+                        <h4><span>🟢</span> Status</h4>
+                        <p class='success'>Running ✅</p>
+                    </div>
+                    <div class='info-item'>
+                        <h4><span>🌍</span> Host</h4>
+                        <p>Render.com</p>
+                    </div>
+                    <div class='info-item'>
+                        <h4><span>👤</span> Owner</h4>
+                        <p>" . OWNER_ID . "</p>
+                    </div>
+                    <div class='info-item'>
+                        <h4><span>🤖</span> Bot</h4>
+                        <p>@MNA_2_Bot</p>
+                    </div>
+                    <div class='info-item'>
+                        <h4><span>👨‍💻</span> Developer</h4>
+                        <p>@EntertainmentTadkaBot</p>
+                    </div>
+                    <div class='info-item'>
+                        <h4><span>🕒</span> Time</h4>
+                        <p>" . date('Y-m-d H:i:s') . "</p>
+                    </div>
+                </div>
+            </div>
             
-            <h3>📊 System Info</h3>
-            <p>PHP Version: " . phpversion() . "</p>
-            <p>Server: " . $_SERVER['SERVER_SOFTWARE'] . "</p>
-            <p>Memory Usage: " . round(memory_get_usage() / 1024 / 1024, 2) . " MB</p>";
+            <div class='btn-group'>";
     
     if (isset($_GET['setwebhook'])) {
-        echo "<div class='status'>";
-        echo "<h4>Webhook Setup Result:</h4>";
-        echo "<pre>" . htmlspecialchars(setWebhook()) . "</pre>";
-        echo "</div>";
+        echo "<div class='status-card'>
+                    <h3><span>⚙️</span> Webhook Setup Result:</h3>
+                    <pre style='background: white; padding: 15px; border-radius: 10px; color: #333;'>" . htmlspecialchars(setWebhook()) . "</pre>
+                </div>";
     }
+    
+    echo "        <a href='?setwebhook=true' class='btn btn-primary'>
+                    <span>⚙️</span>
+                    Set Webhook
+                </a>
+                <a href='?checkstatus=true' class='btn btn-success'>
+                    <span>📊</span>
+                    Check Status
+                </a>
+                <a href='movies.csv' class='btn btn-warning' target='_blank'>
+                    <span>📁</span>
+                    View CSV
+                </a>
+                <a href='https://t.me/MNA_2_Bot' class='btn btn-danger' target='_blank'>
+                    <span>🤖</span>
+                    Open Bot
+                </a>
+            </div>";
     
     // CSV content display
     if (file_exists(CSV_FILE)) {
-        echo "<h3>🎬 CSV Content Preview:</h3>";
+        echo "<h3 style='margin: 30px 0 15px 0; color: #333;'><span>🎬</span> CSV Content Preview:</h3>";
         echo "<table>";
-        echo "<tr><th>Movie Name</th><th>Message ID</th><th>Channel</th></tr>";
+        echo "<thead>
+                <tr>
+                    <th>Movie Name</th>
+                    <th>Message ID</th>
+                    <th>Channel</th>
+                </tr>
+              </thead>
+              <tbody>";
         
         $movies = readCSV(CSV_FILE);
         foreach ($movies as $movie) {
             echo "<tr>";
-            echo "<td>" . htmlspecialchars($movie['name']) . "</td>";
+            echo "<td><strong>" . htmlspecialchars($movie['name']) . "</strong></td>";
             echo "<td>" . $movie['message_id'] . "</td>";
             echo "<td>" . htmlspecialchars($movie['channel_username']) . "</td>";
             echo "</tr>";
         }
-        echo "</table>";
-        echo "<p>Total Movies: " . count($movies) . "</p>";
+        echo "</tbody></table>";
+        echo "<p style='text-align: center; margin-top: 10px; color: #666;'>Total Movies: " . count($movies) . "</p>";
     }
     
-    echo "<hr>
-            <h3>📖 Instructions:</h3>
-            <ol>
-                <li>Bot ko Telegram me /start command bhejo</li>
-                <li>/forward_all se movies forward karo</li>
-                <li>CSV file update karne ke liye Render.com dashboard use karo</li>
-                <li>Logs ke liye Render.com ke logs section me jao</li>
-            </ol>
+    echo "    <div class='instructions'>
+                <h3><span>📖</span> Instructions:</h3>
+                <ol>
+                    <li>Bot ko Telegram me /start command bhejo</li>
+                    <li>/forward_all se movies forward karo</li>
+                    <li>/addmovie se new movie add karo: /addmovie Movie Name,message_id,channel_username</li>
+                    <li>/listmovies se sab movies dekho</li>
+                    <li>CSV file update karne ke liye Render.com dashboard use karo</li>
+                    <li>Logs ke liye Render.com ke logs section me jao</li>
+                    <li>Webhook reset karne ke liye /webhook command ya 'Set Webhook' button use karo</li>
+                </ol>
+            </div>
             
-            <p class='error'><strong>Note:</strong> Sirf owner (ID: " . OWNER_ID . ") hi commands use kar sakta hai.</p>
+            <div class='footer'>
+                <p><strong>Note:</strong> Sirf owner (ID: " . OWNER_ID . ") hi commands use kar sakta hai.</p>
+                <p style='margin-top: 10px;'>Built for Render.com Docker Deployment | Port: 8080</p>
+            </div>
         </div>
+        
+        <script>
+            // Auto refresh status if checkstatus parameter present
+            if (window.location.search.includes('checkstatus=true')) {
+                setTimeout(() => {
+                    alert('Bot is running smoothly! ✅');
+                }, 500);
+            }
+            
+            // Button animations
+            document.querySelectorAll('.btn').forEach(btn => {
+                btn.addEventListener('click', function(e) {
+                    if (this.getAttribute('href') === '#') {
+                        e.preventDefault();
+                        this.style.transform = 'scale(0.95)';
+                        setTimeout(() => {
+                            this.style.transform = '';
+                        }, 200);
+                    }
+                });
+            });
+        </script>
     </body>
     </html>";
 }
 
 // Script end logging
+logMessage("========================================");
 logMessage("Script completed at: " . date('Y-m-d H:i:s'));
+logMessage("Memory Usage: " . round(memory_get_usage() / 1024 / 1024, 2) . " MB");
+logMessage("========================================");
 ?>
