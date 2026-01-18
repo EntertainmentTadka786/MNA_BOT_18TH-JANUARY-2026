@@ -10,7 +10,15 @@ services:
       - OWNER_ID=1080317415
       - GROUP_ID=-1003083386043
       - RENDER=true
+      - PORT=8080
     volumes:
-      - ./data:/var/www/html/data
-      - ./logs:/var/www/html/logs
+      - ./users.json:/var/www/html/users.json
+      - ./movies.csv:/var/www/html/movies.csv
+      - ./bot_log.txt:/var/www/html/bot_log.txt
+      - ./error.log:/var/www/html/error.log
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
