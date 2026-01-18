@@ -1,0 +1,33 @@
+# Security headers
+Header set X-Content-Type-Options "nosniff"
+Header set X-Frame-Options "SAMEORIGIN"
+Header set X-XSS-Protection "1; mode=block"
+
+# Hide directory listings
+Options -Indexes
+
+# Enable rewrite engine
+RewriteEngine On
+
+# Redirect to index.php for all requests
+RewriteCond %{REQUEST_FILENAME} !-f
+RewriteCond %{REQUEST_FILENAME} !-d
+RewriteRule ^ index.php [QSA,L]
+
+# Protect sensitive files
+<FilesMatch "\.(json|log|csv|txt)$">
+    Order allow,deny
+    Deny from all
+</FilesMatch>
+
+# Allow access to index.php only
+<Files index.php>
+    Order allow,deny
+    Allow from all
+</Files>
+
+# Set PHP variables
+php_value upload_max_filesize 10M
+php_value post_max_size 10M
+php_value max_execution_time 300
+php_value max_input_time 300

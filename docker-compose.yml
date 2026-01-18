@@ -1,0 +1,16 @@
+version: '3.8'
+
+services:
+  telegram-bot:
+    build: .
+    ports:
+      - "8080:8080"
+    environment:
+      - BOT_TOKEN=8083858449:AAHg-B6wzXmyshFzB1D4VKEYAAKfol4BV0Y
+      - OWNER_ID=1080317415
+      - GROUP_ID=-1003083386043
+      - RENDER=true
+    volumes:
+      - ./data:/var/www/html/data
+      - ./logs:/var/www/html/logs
+    restart: unless-stopped
